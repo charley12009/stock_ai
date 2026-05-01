@@ -12,22 +12,21 @@ from GoogleNews import GoogleNews
 import os # 新增：用來處理檔案路徑
 import urllib.request
 import xml.etree.ElementTree as ET
+from pathlib import Path
 
 app = FastAPI()
 
 # ==========================================
 # ⚠️ 路徑設定 (關鍵修改)
 # ==========================================
-# 取得 main.py 所在的目錄 (即 C:\project\stock_web_1206\py)
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-# 取得專案根目錄 (即 C:\project\stock_web_1206)
-PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+# 取得 main.py 所在的目錄
+CURRENT_DIR = Path(__file__).resolve().parent
+# 取得專案根目錄
+PROJECT_ROOT = CURRENT_DIR.parent
 
-# 設定 HTML 和 Logo 的絕對路徑
 HTML_FILE = PROJECT_ROOT / "index.html"
 LOGO_FILE = PROJECT_ROOT / "logo.PNG"
 LOGO_WHITE_FILE = PROJECT_ROOT / "logo_white.png"
-
 
 # ==========================================
 # ⚠️ API KEY
@@ -49,24 +48,21 @@ app.add_middleware(
 
 @app.get("/")
 async def read_root():
-    # 確保 HTML 檔案存在
-    if not os.path.exists(HTML_FILE):
+    if not HTML_FILE.exists():
         return {"error": f"找不到檔案: {HTML_FILE}"}
-    return FileResponse(HTML_FILE)
+    return FileResponse(str(HTML_FILE))
 
-# 專門用來提供 Logo圖片的路由
-# 即使您的 HTML 寫的是 /static/logo.PNG，這裡會攔截並回傳根目錄的圖片
 @app.get("/logo.PNG")
 async def get_logo():
-    if not os.path.exists(LOGO_FILE):
+    if not LOGO_FILE.exists():
         return {"error": "找不到 Logo 圖片"}
-    return FileResponse(LOGO_FILE)
+    return FileResponse(str(LOGO_FILE))
 
 @app.get("/logo_white.png")
 async def get_logo_white():
-    if not os.path.exists(LOGO_WHITE_FILE):
+    if not LOGO_WHITE_FILE.exists():
         return {"error": "找不到淺色 Logo 圖片"}
-    return FileResponse(LOGO_WHITE_FILE)
+    return FileResponse(str(LOGO_WHITE_FILE))
 # ==========================================
 # 以下為原本的股票/新聞/聊天邏輯 (維持不變)
 # ==========================================
