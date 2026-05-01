@@ -126,7 +126,23 @@ def fetch_news_by_lib(query, lang='zh'):
     except Exception as e:
         print(f"GoogleNews Lib Error: {e}")
     return formatted_results
-
+def fetch_yfinance_news(ticker_name: str):
+    try:
+        stock = yf.Ticker(ticker_name)
+        yf_news = stock.news or []
+        results = []
+        for n in yf_news[:5]:
+            results.append({
+                "title": n.get("title", ""),
+                "link": n.get("link", ""),
+                "publisher": n.get("publisher", "Yahoo Finance"),
+                "time": datetime.fromtimestamp(n.get("providerPublishTime", 0)).strftime("%Y-%m-%d")
+                        if n.get("providerPublishTime") else "Recent"
+            })
+        return results
+    except Exception as e:
+        print(f"yfinance news error: {e}")
+        return []
 @app.get("/api/news/{symbol}")
 async def get_only_news(symbol: str, lang: str = "zh"):
     try:
@@ -139,23 +155,15 @@ async def get_only_news(symbol: str, lang: str = "zh"):
         else:
             search_keyword = info.get('shortName') or info.get('longName') or ticker_name
 
-        news_data = fetch_news_by_lib(search_keyword, lang)
+        # 先用 yfinance
+        news_data = fetch_yfinance_news(ticker_name)
+
+        # 再嘗試 GoogleNews / RSS
+        if not news_data:
+            news_data = fetch_news_by_lib(search_keyword, lang)
 
         if not news_data:
-            print(f"GoogleNews 無結果，啟動 Google RSS 備援取得 {search_keyword} 新聞...")
             news_data = fetch_google_rss_news(search_keyword, lang)
-
-        # 再加一層 yfinance 備援
-        if not news_data:
-            print(f"Google RSS 仍無結果，啟動 yfinance news 備援: {ticker_name}")
-            yf_news = stock.news or []
-            for n in yf_news[:5]:
-                news_data.append({
-                    "title": n.get("title", ""),
-                    "link": n.get("link", ""),
-                    "publisher": n.get("publisher", "Yahoo Finance"),
-                    "time": datetime.fromtimestamp(n.get("providerPublishTime", 0)).strftime("%Y-%m-%d") if n.get("providerPublishTime") else "Recent"
-                })
 
         return news_data
     except Exception as e:
@@ -165,29 +173,48 @@ async def get_only_news(symbol: str, lang: str = "zh"):
 # ... (chat_search_logic 函式維持不變) ...
 def chat_search_logic(query):
     results = []
-    lib_results = fetch_news_by_lib(f"{query} 新聞", lang='zh')
-    if lib_results:
-        print("GoogleNews Lib 搜尋成功！")
-        for r in lib_results:
-            results.append(f"標題: {r['title']}\n時間: {r['time']}\n來源連結: {r['link']}\n說明: Google News")
+
+    potential_tickers = re.findall(r'[a-zA-Z0-9]+', query)
+    for t in potential_tickers:
+        if len(t) < 2 and not t.isdigit():
+            continue
+        if t.lower() in ['is', 'the', 'in', 'on', 'at', 'stock', 'news', 'buy', 'sell']:
+            continue
+
+        try:
+            formatted_ticker = format_ticker(t)
+
+            # 先用 yfinance
+            yf_news = fetch_yfinance_news(formatted_ticker)
+            if yf_news:
+                for n in yf_news[:3]:
+                    results.append(
+                        f"標題: {n['title']}\n時間: {n['time']}\n來源連結: {n['link']}\n說明: {n['publisher']}"
+                    )
+                break
+
+            # 再用 GoogleNews / RSS
+            lib_results = fetch_news_by_lib(f"{t} 新聞", lang='zh')
+            if lib_results:
+                for r in lib_results[:3]:
+                    results.append(
+                        f"標題: {r['title']}\n時間: {r['time']}\n來源連結: {r['link']}\n說明: Google News"
+                    )
+                break
+
+            rss_results = fetch_google_rss_news(f"{formatted_ticker} 股票", lang='zh')
+            if rss_results:
+                for n in rss_results[:3]:
+                    results.append(
+                        f"標題: {n['title']}\n時間: {n['time']}\n來源連結: {n['link']}\n說明: {n['publisher']}"
+                    )
+                break
+        except Exception:
+            pass
 
     if not results:
-        print("GoogleNews 無結果，啟動 Google RSS 備援...")
-        potential_tickers = re.findall(r'[a-zA-Z0-9]+', query)
-        for t in potential_tickers:
-            if len(t) < 2 and not t.isdigit(): continue
-            if t.lower() in ['is', 'the', 'in', 'on', 'at', 'stock', 'news', 'buy', 'sell']: continue
-            try:
-                formatted_ticker = format_ticker(t)
-                g_news = fetch_google_rss_news(f"{formatted_ticker} 股票", lang='zh')
-                if g_news:
-                    print(f"★ 抓到 Google RSS 新聞: {formatted_ticker}")
-                    for n in g_news[:3]:
-                        results.append(f"標題: {n['title']}\n時間: {n['time']}\n來源連結: {n['link']}\n說明: {n['publisher']}")
-                    if results: break 
-            except Exception:
-                pass
-    if not results: return None
+        return None
+
     return "\n\n".join(results)
 
 @app.post("/api/chat")
