@@ -260,34 +260,20 @@ async def get_stock_info(symbol: str, lang: str = "zh"):
         ticker_name = format_ticker(symbol)
         stock = yf.Ticker(ticker_name)
 
-        # 先用 history 取價格，避免 stock.info 觸發 rate limit
-        hist = get_history_cached(ticker_name, "5d", "1d")
+        hist = stock.history(period="5d", interval="1d")
         if hist.empty:
             raise HTTPException(status_code=404, detail="查無此股票或無法取得資料")
 
         price = float(hist["Close"].iloc[-1])
         prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else price
 
-        # info 只當加分資料，失敗就略過
-        info = {}
-        try:
-            info = stock.fast_info if hasattr(stock, "fast_info") else {}
-        except Exception:
-            info = {}
-
         name = ticker_name
         currency = "USD"
-        try:
-            full_info = stock.info
-            name = full_info.get("longName", ticker_name)
-            currency = full_info.get("currency", "USD")
-        except Exception as e:
-            print(f"stock.info 取得失敗，改用 fallback: {e}")
 
-        if lang == 'zh':
+        if lang == "zh":
             search_keyword = f"{symbol.upper()} 股票"
         else:
-            search_keyword = name or ticker_name
+            search_keyword = name
 
         news_data = fetch_yfinance_news(ticker_name)
         if not news_data:
@@ -309,7 +295,6 @@ async def get_stock_info(symbol: str, lang: str = "zh"):
             "year_low": "N/A",
             "news": news_data
         }
-
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
