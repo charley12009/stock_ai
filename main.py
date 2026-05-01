@@ -21,12 +21,10 @@ app = FastAPI()
 # ==========================================
 # 取得 main.py 所在的目錄
 CURRENT_DIR = Path(__file__).resolve().parent
-# 取得專案根目錄
-PROJECT_ROOT = CURRENT_DIR.parent
 
-HTML_FILE = PROJECT_ROOT / "index.html"
-LOGO_FILE = PROJECT_ROOT / "logo.PNG"
-LOGO_WHITE_FILE = PROJECT_ROOT / "logo_white.png"
+HTML_FILE = CURRENT_DIR / "index.html"
+LOGO_FILE = CURRENT_DIR / "logo.PNG"
+LOGO_WHITE_FILE = CURRENT_DIR / "logo_white.png"
 
 # ==========================================
 # ⚠️ API KEY
