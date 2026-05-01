@@ -32,7 +32,6 @@ LOGO_WHITE_FILE = os.path.join(PROJECT_ROOT, "logo_white.png")
 # ==========================================
 # ⚠️ API KEY
 # ==========================================
-# GROQ_API_KEY = "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" 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 client = Groq(api_key=GROQ_API_KEY)
 
