@@ -13,7 +13,7 @@ import os # 新增：用來處理檔案路徑
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-
+from functools import lru_cache
 app = FastAPI()
 
 # ==========================================
@@ -249,39 +249,67 @@ async def chat_with_ai(payload: dict = Body(...)):
         print(f"Chat Error: {e}")
         return {"reply": "抱歉，系統發生錯誤，請稍後再試。"}
 
+@lru_cache(maxsize=128)
+def get_history_cached(ticker_name: str, period: str = "5d", interval: str = "1d"):
+    stock = yf.Ticker(ticker_name)
+    return stock.history(period=period, interval=interval)
+
 @app.get("/api/stock/{symbol}")
 async def get_stock_info(symbol: str, lang: str = "zh"):
     try:
         ticker_name = format_ticker(symbol)
         stock = yf.Ticker(ticker_name)
-        info = stock.info
-        price = info.get('currentPrice') or info.get('regularMarketPrice')
-        if price is None:
-            hist_today = stock.history(period="1d")
-            if not hist_today.empty:
-                price = hist_today['Close'].iloc[-1]
-            else:
-                raise HTTPException(status_code=404, detail="Stock not found")
-        
-        if lang == 'zh': 
-            search_keyword = f"{symbol.upper()} 股票"
-        else: 
-            search_keyword = info.get('shortName') or info.get('longName') or ticker_name
-        
-        news_data = fetch_news_by_lib(search_keyword, lang)
 
+        # 先用 history 取價格，避免 stock.info 觸發 rate limit
+        hist = get_history_cached(ticker_name, "5d", "1d")
+        if hist.empty:
+            raise HTTPException(status_code=404, detail="查無此股票或無法取得資料")
+
+        price = float(hist["Close"].iloc[-1])
+        prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else price
+
+        # info 只當加分資料，失敗就略過
+        info = {}
+        try:
+            info = stock.fast_info if hasattr(stock, "fast_info") else {}
+        except Exception:
+            info = {}
+
+        name = ticker_name
+        currency = "USD"
+        try:
+            full_info = stock.info
+            name = full_info.get("longName", ticker_name)
+            currency = full_info.get("currency", "USD")
+        except Exception as e:
+            print(f"stock.info 取得失敗，改用 fallback: {e}")
+
+        if lang == 'zh':
+            search_keyword = f"{symbol.upper()} 股票"
+        else:
+            search_keyword = name or ticker_name
+
+        news_data = fetch_yfinance_news(ticker_name)
         if not news_data:
-            print(f"GoogleNews 無結果，啟動 Google RSS 備援取得 {search_keyword} 新聞...")
+            news_data = fetch_news_by_lib(search_keyword, lang)
+        if not news_data:
             news_data = fetch_google_rss_news(search_keyword, lang)
 
         return {
-            "symbol": ticker_name, "name": info.get('longName', ticker_name),
-            "price": price, "currency": info.get('currency', 'USD'),
-            "day_high": info.get('dayHigh', 'N/A'), "day_low": info.get('dayLow', 'N/A'),
-            "volume": info.get('volume', 'N/A'), "previous_close": info.get('previousClose', 'N/A'),
-            "pe_ratio": info.get('trailingPE', 'N/A'), "year_high": info.get('fiftyTwoWeekHigh', 'N/A'),
-            "year_low": info.get('fiftyTwoWeekLow', 'N/A'), "news": news_data
+            "symbol": ticker_name,
+            "name": name,
+            "price": price,
+            "currency": currency,
+            "day_high": float(hist["High"].iloc[-1]),
+            "day_low": float(hist["Low"].iloc[-1]),
+            "volume": int(hist["Volume"].iloc[-1]),
+            "previous_close": prev_close,
+            "pe_ratio": "N/A",
+            "year_high": "N/A",
+            "year_low": "N/A",
+            "news": news_data
         }
+
     except Exception as e:
         print(f"Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
