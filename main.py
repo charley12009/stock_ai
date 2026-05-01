@@ -226,10 +226,10 @@ async def chat_with_ai(payload: dict = Body(...)):
         print(f"Chat Error: {e}")
         return {"reply": "抱歉，系統發生錯誤，請稍後再試。"}
 
-@lru_cache(maxsize=128)
-def get_history_cached(ticker_name: str, period: str = "5d", interval: str = "1d"):
-    stock = yf.Ticker(ticker_name)
-    return stock.history(period=period, interval=interval)
+# @lru_cache(maxsize=128)
+# def get_history_cached(ticker_name: str, period: str = "5d", interval: str = "1d"):
+#     stock = yf.Ticker(ticker_name)
+#     return stock.history(period=period, interval=interval)
 
 @app.get("/api/stock/{symbol}")
 async def get_stock_info(symbol: str, lang: str = "zh"):
