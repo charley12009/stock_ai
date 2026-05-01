@@ -24,9 +24,9 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 
 # 設定 HTML 和 Logo 的絕對路徑
-HTML_FILE = os.path.join(PROJECT_ROOT, "html", "index.html")
-LOGO_FILE = os.path.join(PROJECT_ROOT, "logo.PNG")
-LOGO_WHITE_FILE = os.path.join(PROJECT_ROOT, "logo_white.png")
+HTML_FILE = PROJECT_ROOT / "index.html"
+LOGO_FILE = PROJECT_ROOT / "logo.PNG"
+LOGO_WHITE_FILE = PROJECT_ROOT / "logo_white.png"
 
 
 # ==========================================
