@@ -13,7 +13,6 @@ import os # 新增：用來處理檔案路徑
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from functools import lru_cache
 app = FastAPI()
 
 # ==========================================
@@ -71,18 +70,30 @@ def format_ticker(symbol: str):
         return f"{symbol}.TW"
     return symbol
 
+def safe_history(ticker_name: str, period: str = "5d", interval: str = "1d"):
+    try:
+        return yf.download(
+            ticker_name,
+            period=period,
+            interval=interval,
+            progress=False,
+            threads=False,
+            auto_adjust=False
+        )
+    except Exception as e:
+        print(f"history error ({ticker_name}): {e}")
+        return None
 # ... (fetch_news_by_lib 函式維持不變) ...
 def fetch_google_rss_news(query: str, lang: str = "zh"):
-    """使用 Google News 官方 RSS 備援，支援文字搜索，能穩定獲得精準語系新聞"""
     try:
         if lang == 'zh':
             url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         else:
             url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-US&gl=US&ceid=US:en"
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             xml_data = response.read()
-        
+
         root = ET.fromstring(xml_data)
         news_list = []
         for item in root.findall('.//item')[:5]:
@@ -91,10 +102,10 @@ def fetch_google_rss_news(query: str, lang: str = "zh"):
             pubDate = item.findtext('pubDate', default='Recent')
             source = item.find('source')
             publisher = source.text if source is not None else "Google News RSS"
-            
+
             if pubDate != 'Recent' and len(pubDate) >= 16:
-                pubDate = pubDate[:16] # 將時間簡化，例如 'Wed, 06 Dec 2023'
-                
+                pubDate = pubDate[:16]
+
             if title and link:
                 news_list.append({"title": title, "link": link, "publisher": publisher, "time": pubDate})
         return news_list
@@ -113,55 +124,32 @@ def fetch_news_by_lib(query, lang='zh'):
         googlenews.search(query)
         results = googlenews.result()
         googlenews.clear()
-        
+
         for item in results[:5]:
             title = item.get('title', '')
             link = item.get('link', '')
             media = item.get('media', 'Google News')
             date = item.get('date', 'Recent')
-            if not title or not link: continue
+            if not title or not link:
+                continue
             formatted_results.append({
                 "title": title, "link": link, "publisher": media, "time": date
             })
     except Exception as e:
         print(f"GoogleNews Lib Error: {e}")
     return formatted_results
-def fetch_yfinance_news(ticker_name: str):
-    try:
-        stock = yf.Ticker(ticker_name)
-        yf_news = stock.news or []
-        results = []
-        for n in yf_news[:5]:
-            results.append({
-                "title": n.get("title", ""),
-                "link": n.get("link", ""),
-                "publisher": n.get("publisher", "Yahoo Finance"),
-                "time": datetime.fromtimestamp(n.get("providerPublishTime", 0)).strftime("%Y-%m-%d")
-                        if n.get("providerPublishTime") else "Recent"
-            })
-        return results
-    except Exception as e:
-        print(f"yfinance news error: {e}")
-        return []
+
 @app.get("/api/news/{symbol}")
 async def get_only_news(symbol: str, lang: str = "zh"):
     try:
         ticker_name = format_ticker(symbol)
-        stock = yf.Ticker(ticker_name)
-        info = stock.info
 
         if lang == 'zh':
             search_keyword = f"{symbol.upper()} 股票"
         else:
-            search_keyword = info.get('shortName') or info.get('longName') or ticker_name
+            search_keyword = ticker_name
 
-        # 先用 yfinance
-        news_data = fetch_yfinance_news(ticker_name)
-
-        # 再嘗試 GoogleNews / RSS
-        if not news_data:
-            news_data = fetch_news_by_lib(search_keyword, lang)
-
+        news_data = fetch_news_by_lib(search_keyword, lang)
         if not news_data:
             news_data = fetch_google_rss_news(search_keyword, lang)
 
@@ -170,11 +158,10 @@ async def get_only_news(symbol: str, lang: str = "zh"):
         print(f"Get News Error: {e}")
         return []
 
-# ... (chat_search_logic 函式維持不變) ...
 def chat_search_logic(query):
     results = []
-
     potential_tickers = re.findall(r'[a-zA-Z0-9]+', query)
+
     for t in potential_tickers:
         if len(t) < 2 and not t.isdigit():
             continue
@@ -184,16 +171,6 @@ def chat_search_logic(query):
         try:
             formatted_ticker = format_ticker(t)
 
-            # 先用 yfinance
-            yf_news = fetch_yfinance_news(formatted_ticker)
-            if yf_news:
-                for n in yf_news[:3]:
-                    results.append(
-                        f"標題: {n['title']}\n時間: {n['time']}\n來源連結: {n['link']}\n說明: {n['publisher']}"
-                    )
-                break
-
-            # 再用 GoogleNews / RSS
             lib_results = fetch_news_by_lib(f"{t} 新聞", lang='zh')
             if lib_results:
                 for r in lib_results[:3]:
@@ -258,34 +235,28 @@ def get_history_cached(ticker_name: str, period: str = "5d", interval: str = "1d
 async def get_stock_info(symbol: str, lang: str = "zh"):
     try:
         ticker_name = format_ticker(symbol)
-        stock = yf.Ticker(ticker_name)
 
-        hist = stock.history(period="5d", interval="1d")
-        if hist.empty:
+        hist = safe_history(ticker_name, period="5d", interval="1d")
+        if hist is None or hist.empty:
             raise HTTPException(status_code=404, detail="查無此股票或無法取得資料")
 
         price = float(hist["Close"].iloc[-1])
         prev_close = float(hist["Close"].iloc[-2]) if len(hist) >= 2 else price
 
-        name = ticker_name
-        currency = "USD"
-
         if lang == "zh":
             search_keyword = f"{symbol.upper()} 股票"
         else:
-            search_keyword = name
+            search_keyword = ticker_name
 
-        news_data = fetch_yfinance_news(ticker_name)
-        if not news_data:
-            news_data = fetch_news_by_lib(search_keyword, lang)
+        news_data = fetch_news_by_lib(search_keyword, lang)
         if not news_data:
             news_data = fetch_google_rss_news(search_keyword, lang)
 
         return {
             "symbol": ticker_name,
-            "name": name,
+            "name": ticker_name,
             "price": price,
-            "currency": currency,
+            "currency": "USD",
             "day_high": float(hist["High"].iloc[-1]),
             "day_low": float(hist["Low"].iloc[-1]),
             "volume": int(hist["Volume"].iloc[-1]),
@@ -310,16 +281,18 @@ async def get_market_indices():
     results = []
     try:
         for symbol, name in indices_symbols.items():
-            ticker = yf.Ticker(symbol)
-            hist = ticker.history(period="2d")
-            if len(hist) >= 2:
+            hist = safe_history(symbol, period="2d", interval="1d")
+            if hist is not None and len(hist) >= 2:
                 prev_close = hist['Close'].iloc[-2]
                 curr_price = hist['Close'].iloc[-1]
                 change = curr_price - prev_close
                 pct_change = (change / prev_close) * 100
                 results.append({
-                    "symbol": symbol, "name": name,
-                    "price": curr_price, "change": change, "percent_change": pct_change
+                    "symbol": symbol,
+                    "name": name,
+                    "price": float(curr_price),
+                    "change": float(change),
+                    "percent_change": float(pct_change)
                 })
         return results
     except Exception as e:
@@ -330,11 +303,14 @@ async def get_market_indices():
 async def get_stock_history(symbol: str, period: str = "1y", interval: str = "1d"):
     try:
         ticker_name = format_ticker(symbol)
-        stock = yf.Ticker(ticker_name)
-        hist = stock.history(period=period, interval=interval)
-        if hist.empty: raise HTTPException(status_code=404, detail="No history data found")
+        hist = safe_history(ticker_name, period=period, interval=interval)
+        if hist is None or hist.empty:
+            raise HTTPException(status_code=404, detail="No history data found")
+
         dates = hist.index.strftime('%Y-%m-%d %H:%M').tolist()
+
         def floor_val(x): return int(x * 1000) / 1000.0
+
         return {
             "dates": dates,
             "open": [floor_val(x) for x in hist['Open'].tolist()],
