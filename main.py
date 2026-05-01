@@ -133,16 +133,30 @@ async def get_only_news(symbol: str, lang: str = "zh"):
         ticker_name = format_ticker(symbol)
         stock = yf.Ticker(ticker_name)
         info = stock.info
+
         if lang == 'zh':
-            # 加入「股票」關鍵字強制 Google News 搜尋中文，避免 yfinance 回傳英文公司名導致搜出英文新聞
             search_keyword = f"{symbol.upper()} 股票"
         else:
             search_keyword = info.get('shortName') or info.get('longName') or ticker_name
-        
+
         news_data = fetch_news_by_lib(search_keyword, lang)
+
         if not news_data:
             print(f"GoogleNews 無結果，啟動 Google RSS 備援取得 {search_keyword} 新聞...")
             news_data = fetch_google_rss_news(search_keyword, lang)
+
+        # 再加一層 yfinance 備援
+        if not news_data:
+            print(f"Google RSS 仍無結果，啟動 yfinance news 備援: {ticker_name}")
+            yf_news = stock.news or []
+            for n in yf_news[:5]:
+                news_data.append({
+                    "title": n.get("title", ""),
+                    "link": n.get("link", ""),
+                    "publisher": n.get("publisher", "Yahoo Finance"),
+                    "time": datetime.fromtimestamp(n.get("providerPublishTime", 0)).strftime("%Y-%m-%d") if n.get("providerPublishTime") else "Recent"
+                })
+
         return news_data
     except Exception as e:
         print(f"Get News Error: {e}")
